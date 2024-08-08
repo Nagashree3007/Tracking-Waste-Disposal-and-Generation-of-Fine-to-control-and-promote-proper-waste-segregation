@@ -1,0 +1,363 @@
+import tkinter as tk
+from tkinter import filedialog
+from PIL import Image, ImageTk
+import tensorflow as tf
+from tensorflow.keras.preprocessing import image
+from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
+import matplotlib.pyplot as plt
+import sqlite3
+
+
+# Load the trained model
+model = tf.keras.models.load_model(r"C:\Users\kavyashree k.s\Downloads\model.h5")
+model_input_size = (64, 64)  # Adjust the target size based on your model's input requirements
+
+# Global variables for file path, pie chart, fine label, and buttons
+file_path = None
+pie_chart = None
+result_label = None
+image_label = None 
+main_canvas = None  # Global variable for the main canvas
+
+# Function to classify an image and calculate the percentage of waste
+@tf.function
+def classify_image(image_array):
+    # Ensure the input array has the correct shape and dtype
+    image_array = tf.convert_to_tensor(image_array, dtype=tf.float32)
+    image_array = tf.expand_dims(image_array, axis=0) / 255.0
+
+    # Use the model as a callable function
+    prediction = model(image_array)
+
+    percentage_biodegradable = (1 - prediction[0][0]) * 100
+    percentage_non_biodegradable = prediction[0][0] * 100
+
+    return percentage_biodegradable, percentage_non_biodegradable
+
+def preprocess_image(img_path, target_size=(64, 64)):
+    # Load and preprocess the image
+    img = image.load_img(img_path, target_size=target_size)
+    img_array = image.img_to_array(img)
+
+    return img_array
+
+
+# Function to handle image upload
+def upload_image():
+    global file_path
+    file_path = filedialog.askopenfilename(title="Select Image File", filetypes=[("Image files", ".png;.jpg;*.jpeg")])
+
+
+def classify_biodegradable_image_from_path():
+    global pie_chart, result_label, image_label
+
+    if file_path:
+        # Preprocess the image (resize to the model's expected input size)
+        img_array = preprocess_image(file_path, target_size=model_input_size)
+
+        # Classify the image and get the percentages
+        percentage_biodegradable, percentage_non_biodegradable = classify_image(img_array)
+        
+        user_name = name_entry.get()
+        phone_number = phone_entry.get()
+        house_number = house_entry.get()
+
+
+        # Output the result
+        result_text.set(f"Percentage Biodegradable: {percentage_biodegradable:.1f}%\n"
+                        f"Percentage Non-Biodegradable: {percentage_non_biodegradable:.1f}%")
+
+        # Visualize the results with a pie chart
+        labels = ['Biodegradable', 'Non-Biodegradable']
+        sizes = [percentage_biodegradable, percentage_non_biodegradable]
+        colors = ['#4CAF50', '#FFC107']  # Green and Yellow
+
+        # Clear previous chart and result label, if any
+        if pie_chart:
+            pie_chart.get_tk_widget().destroy()
+        if result_label:
+            result_label.destroy()
+
+        # Remove the background image
+        main_canvas.delete("all")
+
+        # Embed Matplotlib figure in Tkinter window
+        fig, ax = plt.subplots(figsize=(4, 3))
+        ax.pie(sizes, labels=labels, colors=colors, autopct='%1.1f%%', startangle=90)
+        ax.axis('equal')
+
+        # Embed Matplotlib figure in Tkinter window
+        pie_chart = FigureCanvasTkAgg(fig, master=main_canvas)
+        pie_chart.draw()
+        pie_chart.get_tk_widget().pack(pady=10, side=tk.TOP)
+
+        # Display the input image
+        if file_path:
+            img = Image.open(file_path)
+            img = img.resize((200, 200))
+            img = ImageTk.PhotoImage(img)
+
+            if image_label:
+                image_label.destroy()
+
+            image_label = tk.Label(main_canvas, image=img)
+            image_label.image = img
+            image_label.pack(pady=10, side=tk.TOP)
+
+        # Display the result in a label with justified text
+        result_label = tk.Label(main_canvas, textvariable=result_text, font=("Bauhaus 93", 12), bg='#F5F5F5', justify=tk.LEFT)
+        result_label.pack(pady=10, side=tk.TOP)
+
+        # Threshold for imposing fine
+        threshold_percentage = 5  # Adjust as needed
+
+        # Impose fine based on the percentage of non-biodegradable waste
+        if percentage_non_biodegradable > threshold_percentage:
+            fine_rate = 2  # Rupees per percentage point
+            fine_amount = percentage_non_biodegradable * fine_rate
+            
+            # Check if user details already exist for the house number
+            conn = sqlite3.connect(r"C:\Users\kavyashree k.s\Desktop\user_details.db")
+            cursor = conn.cursor()
+            cursor.execute("SELECT * FROM UserDetails WHERE HouseNumber=?", (house_number,))
+            existing_record = cursor.fetchone()
+            
+            if existing_record:
+                # Update existing record with new fine amount
+                new_fine_amount = existing_record[3] + int(fine_amount)  # Add new fine to existing fine
+                cursor.execute("UPDATE UserDetails SET FineAmount=? WHERE HouseNumber=?", (new_fine_amount, house_number))
+            else:
+                # Insert new record
+                cursor.execute("INSERT INTO UserDetails (Name, PhoneNumber, HouseNumber, FineAmount) VALUES (?, ?, ?, ?)",
+                               (user_name, phone_number, house_number, int(fine_amount)))
+            
+            conn.commit()
+            conn.close()
+
+
+            # Display fine information in a label with justified text
+            fine_text = f"Fine imposed: {fine_amount:.2f} rupees."
+            fine_label = tk.Label(main_canvas, text=fine_text, font=("Bauhaus 93", 12), bg='#F5F5F5', fg='#FF5722')  # Light gray background, orange text
+            fine_label.pack(pady=10, side=tk.TOP)
+
+        else:
+            no_fine_text = "No fine imposed."
+            fine_label = tk.Label(main_canvas, text=no_fine_text, font=("Bauhaus 93", 12), bg='#F5F5F5', fg='green')  # Light gray background, green text
+            fine_label.pack(pady=10, side=tk.TOP)
+
+        # Hide upload and classify buttons
+        upload_button.pack_forget()
+        classify_button.pack_forget()
+
+
+def classify_non_biodegradable_image_from_path():
+    global pie_chart, result_label, image_label
+
+    if file_path:
+        # Preprocess the image (resize to the model's expected input size)
+        img_array = preprocess_image(file_path, target_size=model_input_size)
+
+        # Classify the image and get the percentages
+        percentage_biodegradable, percentage_non_biodegradable = classify_image(img_array)
+        
+        user_name = name_entry.get()
+        phone_number = phone_entry.get()
+        house_number = house_entry.get()
+
+
+        # Output the result
+        result_text.set(f"Percentage Biodegradable: {percentage_biodegradable:.1f}%\n"
+                        f"Percentage Non-Biodegradable: {percentage_non_biodegradable:.1f}%")
+
+        # Visualize the results with a pie chart
+        labels = ['Biodegradable', 'Non-Biodegradable']
+        sizes = [percentage_biodegradable, percentage_non_biodegradable]
+        colors = ['#4CAF50', '#FFC107']  # Green and Yellow
+
+        # Clear previous chart and result label, if any
+        if pie_chart:
+            pie_chart.get_tk_widget().destroy()
+        if result_label:
+            result_label.destroy()
+
+        # Remove the background image
+        main_canvas.delete("all")
+
+        # Embed Matplotlib figure in Tkinter window
+        fig, ax = plt.subplots(figsize=(4, 3))
+        ax.pie(sizes, labels=labels, colors=colors, autopct='%1.1f%%', startangle=90)
+        ax.axis('equal')
+
+        # Embed Matplotlib figure in Tkinter window
+        pie_chart = FigureCanvasTkAgg(fig, master=main_canvas)
+        pie_chart.draw()
+        pie_chart.get_tk_widget().pack(pady=10, side=tk.TOP)
+
+        # Display the input image
+        if file_path:
+            img = Image.open(file_path)
+            img = img.resize((200, 200))
+            img = ImageTk.PhotoImage(img)
+
+            if image_label:
+                image_label.destroy()
+
+            image_label = tk.Label(main_canvas, image=img)
+            image_label.image = img
+            image_label.pack(pady=10, side=tk.TOP)
+
+        # Display the result in a label with justified text
+        result_label = tk.Label(main_canvas, textvariable=result_text, font=("Bauhaus 93", 12), bg='#F5F5F5', justify=tk.LEFT)
+        result_label.pack(pady=10, side=tk.TOP)
+
+        # Threshold for imposing fine
+        threshold_percentage = 5  # Adjust as needed
+
+        # Impose fine based on the percentage of biodegradable waste
+        if percentage_biodegradable > threshold_percentage:
+            fine_rate = 2  # Rupees per percentage point
+            fine_amount = percentage_biodegradable * fine_rate
+            
+            
+            # Check if user details already exist for the house number
+            conn = sqlite3.connect(r"C:\Users\kavyashree k.s\Desktop\user_details.db")
+            cursor = conn.cursor()
+            cursor.execute("SELECT * FROM UserDetails WHERE HouseNumber=?", (house_number,))
+            existing_record = cursor.fetchone()
+            
+            
+            if existing_record:
+                # Update existing record with new fine amount
+                new_fine_amount = existing_record[3] + int(fine_amount)  # Add new fine to existing fine
+                cursor.execute("UPDATE UserDetails SET FineAmount=? WHERE HouseNumber=?", (new_fine_amount, house_number))
+            else:
+                # Insert new record
+                cursor.execute("INSERT INTO UserDetails (Name, PhoneNumber, HouseNumber, FineAmount) VALUES (?, ?, ?, ?)",
+                               (user_name, phone_number, house_number, int(fine_amount)))
+            
+            conn.commit()
+            conn.close()
+            
+
+            # Display fine information in a label with justified text
+            fine_text = f"Fine imposed: {fine_amount:.2f} rupees."
+            fine_label = tk.Label(main_canvas, text=fine_text, font=("Bauhaus 93", 12), bg='#F5F5F5', fg='#FF5722')  # Light gray background, orange text
+            fine_label.pack(pady=10, side=tk.TOP)
+
+        else:
+            no_fine_text = "No fine imposed."
+            fine_label = tk.Label(main_canvas, text=no_fine_text, font=("Bauhaus 93", 12), bg='#F5F5F5', fg='green')  # Light gray background, green text
+            fine_label.pack(pady=10, side=tk.TOP)
+
+        # Hide upload and classify buttons
+        upload_button1.pack_forget()
+        classify_button1.pack_forget()
+        
+# Function to show image classification options
+def show_biodegradable_classification_options(selected_option):
+    # Hide initial buttons
+    biodegradable_button.place_forget()
+    non_biodegradable_button.place_forget()
+
+    # Display Upload and Classify buttons based on the selected option
+    if selected_option == 'Biodegradable':
+        upload_button.pack(pady=10)
+        classify_button.pack(pady=10)
+
+# Function to show image classification options
+def show_non_biodegradable_classification_options(selected_option):
+    # Hide initial buttons
+    biodegradable_button.place_forget()
+    non_biodegradable_button.place_forget()
+
+    # Display Upload and Classify buttons based on the selected option
+    if selected_option == 'Non-Biodegradable':
+        upload_button1.pack(pady=10)
+        classify_button1.pack(pady=10)
+
+
+
+# Create the main application window
+main_window = tk.Tk()
+main_window.title("Waste Classification App")
+main_window.geometry("800x600")  # Set your preferred initial size
+main_window.configure(bg='#F5F5F5')  # Light gray background
+
+# Maximize the window
+main_window.state('zoomed')
+
+# Create a Canvas to display the background image
+main_canvas = tk.Canvas(main_window, width=main_window.winfo_screenwidth(), height=main_window.winfo_screenheight())
+main_canvas.pack(fill="both", expand=True)
+
+# Load the background image
+image_path_main = r"C:\Users\kavyashree k.s\Desktop\kavyanew.jpg"
+
+try:
+    login_background_image = Image.open(image_path_main)
+    login_background_image = ImageTk.PhotoImage(login_background_image)
+
+    # Set the background image on the canvas
+    main_canvas.create_image(0, 0, image=login_background_image, anchor="nw")
+
+except Exception as e:
+    print(f"Error loading image: {e}")
+    
+name_label = tk.Label(main_canvas, text="Name:", font=("Brush Script MT", 18, "bold"), fg='#2E86AB', bg='#F5F5F5')
+name_label.pack(pady=5, side=tk.TOP)
+name_entry = tk.Entry(main_canvas, font=("Calibri", 12), bg="#FFFFFF", fg="#333333", bd=2, relief=tk.GROOVE)
+name_entry.pack(pady=5, side=tk.TOP)
+
+phone_label = tk.Label(main_canvas, text="Phone Number:", font=("Brush Script MT", 18, "bold"), fg='#FFA500', bg='#F5F5F5')
+phone_label.pack(pady=5, side=tk.TOP)
+phone_entry = tk.Entry(main_canvas, font=("Calibri", 12), bg="#FFE4B5", fg="#333333", bd=2, relief=tk.GROOVE)
+phone_entry.pack(pady=5, side=tk.TOP)
+
+house_label = tk.Label(main_canvas, text="House Number:", font=("Brush Script MT", 18, "bold"), fg='#8B4513', bg='#F5F5F5')
+house_label.pack(pady=5, side=tk.TOP)
+house_entry = tk.Entry(main_canvas, font=("Calibri", 12), bg="#FFE4C4", fg="#333333", bd=2, relief=tk.GROOVE)
+house_entry.pack(pady=5, side=tk.TOP)
+
+
+
+# Create buttons for initial classification options
+biodegradable_image = tk.PhotoImage(file="C:\\Users\\kavyashree k.s\\Desktop\\biodegradable.png").subsample(4, 4)  
+biodegradable_button = tk.Button(main_canvas,image=biodegradable_image, compound=tk.LEFT, command=lambda: show_biodegradable_classification_options('Biodegradable'), bg='#2196F3', fg='#FFFFFF', font=("Bodoni MT Black", 12))
+
+non_biodegradable_image = tk.PhotoImage(file="C:\\Users\\kavyashree k.s\\Desktop\\nonbiodegradable.png").subsample(4, 4)  
+non_biodegradable_button = tk.Button(main_canvas, image=non_biodegradable_image, compound=tk.LEFT, command=lambda: show_non_biodegradable_classification_options('Non-Biodegradable'), bg='#4CAF50', fg='#FFFFFF', font=("Bodoni MT Black", 12))
+
+# Create buttons for image upload and classification bio
+upload_button = tk.Button(main_canvas, text="Upload Image", command=upload_image, bg='#2196F3', fg='#FFFFFF', font=("Bodoni MT Black", 12))
+
+classify_button = tk.Button(main_canvas, text="Classify Image", command=classify_biodegradable_image_from_path, bg='#4CAF50', fg='#FFFFFF', font=("Bodoni MT Black", 12))
+
+# Create buttons for image upload and classification non-bio
+upload_button1 = tk.Button(main_canvas, text="Upload Image", command=upload_image, bg='#2196F3', fg='#FFFFFF', font=("Bodoni MT Black", 12))
+
+classify_button1 = tk.Button(main_canvas, text="Classify Image", command=classify_non_biodegradable_image_from_path, bg='#4CAF50', fg='#FFFFFF', font=("Bodoni MT Black", 12))
+
+# Initialize a Tkinter StringVar for dynamic text update
+result_text = tk.StringVar()
+
+# Function to handle submission of user details
+def submit_details():
+    # Hide user detail inputs
+    name_label.pack_forget()
+    name_entry.pack_forget()
+    phone_label.pack_forget()
+    phone_entry.pack_forget()
+    house_label.pack_forget()
+    house_entry.pack_forget()
+    submit_button.pack_forget()
+
+    # Display classification options buttons
+    biodegradable_button.place(x=450, y=300)
+    non_biodegradable_button.place(x=800, y=300)
+
+# Create a "Submit" button
+submit_button = tk.Button(main_canvas, text="Submit", command=submit_details, bg='#FF5722', fg='#FFFFFF', font=("Lucida Calligraphy", 12,"bold"))
+submit_button.pack(pady=10, side=tk.TOP)
+
+# Run the Tkinter event loop for the main window
+main_window.mainloop()
